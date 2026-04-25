@@ -1,0 +1,9 @@
+{
+  "name": "WBS Billing System",
+  "short_name": "WBS Billing",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0668d7",
+  "background_color": "#eeeeee",
+  "icons": [{"src": "/icons/icon.svg", "sizes": "512x512", "type": "image/svg+xml"}]
+}
