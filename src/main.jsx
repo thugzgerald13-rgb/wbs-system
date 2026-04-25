@@ -176,15 +176,47 @@ function Reports({ setPage, setPreviewBill }) {
   useEffect(() => { (async () => { const { data } = await supabase.from("bills").select("*").order("id", { ascending: false }); const next = (data || []).map(toBill); setBills(next.length ? next : [sampleBill]); saveCache("bills", next.length ? next : [sampleBill]); })(); }, []);
   const bill = bills[0] || sampleBill;
   return <div className="report-shell">
-    {["Daily Payment Collection Report", "Consumer With Outstanding Billing Report", "Detailed Summary Report"].map(t => <div className="acc" key={t}><button className="acc-head">{t}</button></div>)}
-    <div className="acc"><button className="acc-head">Monthly Billing Summary Report</button><div className="acc-body"><div className="monthly-box"><label className="period-label">Period Covered</label><div className="monthly-row"><select value={bill.period} readOnly><option>{bill.period}</option></select><label className="showpay"><input type="checkbox" /> Show Payment</label></div><div className="report-actions"><button onClick={() => setPage("generateBilling")}><FileText size={16} /> Edit Billing Data</button><button
-  className="green"
-  onClick={() => {
-    setPreviewBill(bill);
-    setTimeout(() => exportPDF(), 500);
-  }}
-><Printer size={16} /> Generate Billing Notice</button></div></div></div></div>
-    <div className="acc"><button className="acc-head">Billing Summary Report</button></div>
+    const [openReport, setOpenReport] = useState(null);
+
+const toggle = (name) => {
+  setOpenReport(openReport === name ? null : name);
+};
+
+[
+  "Daily Payment Collection Report",
+  "Consumer With Outstanding Billing Report",
+  "Detailed Summary Report",
+  "Monthly Billing Summary Report"
+].map((t) => (
+  <div className="acc" key={t}>
+    
+    <button
+      className="acc-head"
+      onClick={() => toggle(t)}
+    >
+      {t}
+    </button>
+
+    {openReport === t && (
+      <div className="acc-body">
+        <p>{t} content here</p>
+
+        {/* Example actions */}
+        <button onClick={() => exportToExcel(bills)}>
+          Export Excel
+        </button>
+
+        <button onClick={() => {
+          setPreviewBill(bills[0]);
+          setTimeout(() => exportPDF(), 500);
+        }}>
+          Generate PDF
+        </button>
+      </div>
+    )}
+
+  </div>
+))
   </div>;
 }
 
