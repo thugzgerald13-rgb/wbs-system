@@ -1,3 +1,6 @@
+import { supabase } from "./supabase";
+import { exportPDF } from "./utils/pdf";
+import { exportToExcel } from "./utils/exportExcel";
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -6,7 +9,6 @@ import {
   Menu, Printer, FileText, X, Save, Plus, Trash2, LogOut
 } from "lucide-react";
 import "./styles.css";
-import { supabase } from "./supabase";
 
 const money = new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -175,7 +177,17 @@ function Reports({ setPage, setPreviewBill }) {
   const bill = bills[0] || sampleBill;
   return <div className="report-shell">
     {["Daily Payment Collection Report", "Consumer With Outstanding Billing Report", "Detailed Summary Report"].map(t => <div className="acc" key={t}><button className="acc-head">{t}</button></div>)}
-    <div className="acc"><button className="acc-head">Monthly Billing Summary Report</button><div className="acc-body"><div className="monthly-box"><label className="period-label">Period Covered</label><div className="monthly-row"><select value={bill.period} readOnly><option>{bill.period}</option></select><label className="showpay"><input type="checkbox" /> Show Payment</label></div><div className="report-actions"><button onClick={() => setPage("generateBilling")}><FileText size={16} /> Edit Billing Data</button><button onClick={() => setPreviewBill(bill)} className="green"><Printer size={16} /> Generate Billing Notice</button></div></div></div></div>
+    <div className="acc"><button className="acc-head">Monthly Billing Summary Report</button><div className="acc-body"><div className="monthly-box"><label className="period-label">Period Covered</label><div className="monthly-row"><select value={bill.period} readOnly><option>{bill.period}</option></select><label className="showpay"><input type="checkbox" /> Show Payment</label></div><div className="report-actions"><button onClick={() => setPage("generateBilling")}><FileText size={16} /> Edit Billing Data</button><button
+  className="green"
+  onClick={() => {
+    setPreviewBill(bill);
+    setTimeout(() => exportPDF(), 500);
+  }}
+><button onClick={() => exportToExcel(bills)}>
+  Export Excel
+</button><button onClick={() => exportPDF()}>
+  Download PDF
+</button><Printer size={16} /> Generate Billing Notice</button></div></div></div></div>
     <div className="acc"><button className="acc-head">Billing Summary Report</button></div>
   </div>;
 }
