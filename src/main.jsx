@@ -7,8 +7,6 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { supabase } from "./supabase";
-
-<<<<<<< HEAD
 const money = new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function saveCache(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
