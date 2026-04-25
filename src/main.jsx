@@ -1,361 +1,137 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import html2pdf from "html2pdf.js";
 import "./styles.css";
 
-const LS = {
-  get: (key, fallback = []) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)),
-  set: (key, value) => localStorage.setItem(key, JSON.stringify(value)),
+const store = {
+  get(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
 };
 
-const money = (value) => Number(value || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n) => Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const uid = () => crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
 const today = () => new Date().toISOString().slice(0, 10);
-const nextMonth = () => {
-  const d = new Date();
-  d.setMonth(d.getMonth() + 1);
-  return d.toISOString().slice(0, 10);
-};
-
-const blankSettings = {
+const defaultSettings = {
   businessName: "Water Billing System",
-  subtitle: "Homeowners / Water Service Billing",
+  subtitle: "Homeowners / Water Billing Management",
   address: "Business address here",
-  note: "Please pay on or before the due date to avoid service interruption.",
-  authorizedBy: "Authorized Representative",
-  officeHours1: "Monday to Friday - Office hours",
-  officeHours2: "Saturday - Office hours",
+  collector: "Authorized Collector",
+  note: "Please pay on or before the due date to avoid disconnection.",
+  weekday: "Monday to Friday - 8:00 AM to 5:00 PM",
+  saturday: "Saturday - 8:00 AM to 12:00 NN"
 };
 
-function seedData(userKey) {
-  const consumersKey = `wbs:${userKey}:consumers`;
-  const periodsKey = `wbs:${userKey}:periods`;
-  const settingsKey = `wbs:${userKey}:settings`;
-  if (!localStorage.getItem(settingsKey)) LS.set(settingsKey, blankSettings);
-  if (!localStorage.getItem(consumersKey)) {
-    LS.set(consumersKey, [
-      { id: crypto.randomUUID(), accountNo: "ACC-001", name: "Sample Consumer A", address: "Sample Block / Lot", meterNo: "MTR-001", status: "Active" },
-      { id: crypto.randomUUID(), accountNo: "ACC-002", name: "Sample Consumer B", address: "Sample Street", meterNo: "MTR-002", status: "Active" },
-    ]);
-  }
-  if (!localStorage.getItem(periodsKey)) {
-    LS.set(periodsKey, [{ id: crypto.randomUUID(), period: "December 2025", dueDate: nextMonth(), rate: 18.65, assoc: 50 }]);
-  }
+function initialData() {
+  return {
+    settings: defaultSettings,
+    users: [{ id: uid(), name: "Admin", role: "ADMIN" }],
+    consumers: [
+      { id: uid(), accountNo: "ACC-001", name: "Sample Consumer", address: "Sample Address", meterNo: "MTR-001", status: "Active" }
+    ],
+    periods: [{ id: uid(), period: "December 2025", dueDate: "2026-01-10", rate: 18.65, assoc: 50 }],
+    bills: [],
+    payments: [],
+    conversions: [{ id: uid(), label: "Water Rate per cu.m", value: 18.65 }, { id: uid(), label: "Default Association Due", value: 50 }]
+  };
 }
 
-function useTenantData(user) {
-  const userKey = user?.toLowerCase().replace(/\s+/g, "-") || "guest";
-  const keys = {
-    consumers: `wbs:${userKey}:consumers`,
-    periods: `wbs:${userKey}:periods`,
-    billings: `wbs:${userKey}:billings`,
-    payments: `wbs:${userKey}:payments`,
-    settings: `wbs:${userKey}:settings`,
-  };
-  const [consumers, setConsumers] = useState([]);
-  const [periods, setPeriods] = useState([]);
-  const [billings, setBillings] = useState([]);
-  const [payments, setPayments] = useState([]);
-  const [settings, setSettings] = useState(blankSettings);
-
-  const load = () => {
-    seedData(userKey);
-    setConsumers(LS.get(keys.consumers));
-    setPeriods(LS.get(keys.periods));
-    setBillings(LS.get(keys.billings));
-    setPayments(LS.get(keys.payments));
-    setSettings(LS.get(keys.settings, blankSettings));
-  };
-
-  useEffect(() => { if (user) load(); }, [user]);
-
-  const saveConsumers = (data) => { setConsumers(data); LS.set(keys.consumers, data); };
-  const savePeriods = (data) => { setPeriods(data); LS.set(keys.periods, data); };
-  const saveBillings = (data) => { setBillings(data); LS.set(keys.billings, data); };
-  const savePayments = (data) => { setPayments(data); LS.set(keys.payments, data); };
-  const saveSettings = (data) => { setSettings(data); LS.set(keys.settings, data); };
-
-  return { consumers, periods, billings, payments, settings, saveConsumers, savePeriods, saveBillings, savePayments, saveSettings, load };
-}
-
-function computeBill(row) {
-  const previous = Number(row.previousReading || 0);
-  const present = Number(row.presentReading || 0);
+function computeBill(bill) {
+  const previous = Number(bill.previousReading || 0);
+  const present = Number(bill.presentReading || 0);
   const consumption = Math.max(0, present - previous);
-  const waterBill = consumption * Number(row.rate || 0);
-  const totalDue = waterBill + Number(row.assoc || 0) + Number(row.previousBalance || 0);
-  return { consumption, waterBill, totalDue };
+  const water = consumption * Number(bill.rate || 0);
+  const total = water + Number(bill.assoc || 0) + Number(bill.previousBalance || 0);
+  return { consumption, water, total };
 }
 
 function Login({ onLogin }) {
-  const [username, setUsername] = useState("");
-  return (
-    <div className="login-page">
-      <div className="login-card">
-        <h2>WBS Login</h2>
-        <p>Multi-user local workspace. Each username has separate data.</p>
-        <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin / collector / user" /></label>
-        <button onClick={() => username.trim() && onLogin(username.trim())}>Login</button>
-      </div>
-    </div>
-  );
+  const [name, setName] = useState("");
+  return <div className="login-page"><div className="login-card"><h2>WBS Login</h2><p>Enter a workspace username. Each username keeps its own data.</p><label>Username<input value={name} onChange={e => setName(e.target.value)} placeholder="admin" /></label><button onClick={() => name.trim() && onLogin(name.trim())}>LOGIN</button></div></div>;
+}
+
+function SideButton({ active, icon, label, onClick, sub }) {
+  return <button className={`${sub ? "side-sub" : "side-item"} ${active ? "active" : ""}`} onClick={onClick}><span className="side-icon">{icon}</span><span>{label}</span></button>;
 }
 
 function Sidebar({ page, setPage, user }) {
-  const items = [
-    ["dashboard", "▦", "Dashboard"],
-    ["consumer-details", "☷", "Consumer Details"],
-    ["consumer-list", "☰", "Consumer List"],
-    ["billing-period", "▣", "Billing Period"],
-    ["generate-billing", "◈", "Generate Billing"],
-    ["billing-list", "▤", "Billing List"],
-    ["payment-posting", "₱", "Payment Posting"],
-    ["payment-list", "◎", "Payment List"],
-    ["reports", "▥", "Reports"],
-    ["settings", "⚙", "Settings"],
-  ];
-  return (
-    <aside className="sidebar">
-      <div className="userbar"><span className="tree-logo">♧</span><span>{user}</span></div>
-      {items.map(([key, icon, label]) => (
-        <button key={key} className={`side-item ${page === key ? "active" : ""}`} onClick={() => setPage(key)}>
-          <span>{icon}</span><span>{label}</span>
-        </button>
-      ))}
-      <div className="roles"><small>ROLES</small><b>ADMIN</b><small>WBS Version 2.0</small></div>
-    </aside>
-  );
+  return <aside className="sidebar">
+    <div className="profile"><div className="logo">♣</div><span>{user}</span><b>‹</b></div>
+    <SideButton active={page === "dashboard"} icon="▦" label="Dashboard" onClick={() => setPage("dashboard")} />
+    <div className="side-group"><div className="side-title"><span>👥</span>Consumer <b>⌃</b></div><SideButton sub active={page === "consumer-details"} icon="☷" label="Consumer Details" onClick={() => setPage("consumer-details")} /><SideButton sub active={page === "consumer-list"} icon="☰" label="Consumer List" onClick={() => setPage("consumer-list")} /></div>
+    <div className="side-group"><div className="side-title"><span>💧</span>Billings <b>⌃</b></div><SideButton sub active={page === "billing-period"} icon="▣" label="Billing Period" onClick={() => setPage("billing-period")} /><SideButton sub active={page === "generate-billing"} icon="◈" label="Generate Billing" onClick={() => setPage("generate-billing")} /><SideButton sub active={page === "billing-list"} icon="▤" label="Billing List" onClick={() => setPage("billing-list")} /></div>
+    <div className="side-group"><div className="side-title"><span>₱</span>Payments <b>⌃</b></div><SideButton sub active={page === "payment-posting"} icon="◎" label="Payment Posting" onClick={() => setPage("payment-posting")} /><SideButton sub active={page === "payment-list"} icon="◉" label="Payment List" onClick={() => setPage("payment-list")} /></div>
+    <SideButton active={page === "reports"} icon="▥" label="Reports" onClick={() => setPage("reports")} />
+    <div className="side-group"><div className="side-title"><span>⚙</span>Settings <b>⌃</b></div><SideButton sub active={page === "users"} icon="♙" label="Users" onClick={() => setPage("users")} /><SideButton sub active={page === "business-info"} icon="▥" label="Business Info" onClick={() => setPage("business-info")} /><SideButton sub active={page === "conversion-table"} icon="▦" label="Conversion Table" onClick={() => setPage("conversion-table")} /><SideButton sub active={page === "other"} icon="⚙" label="Other" onClick={() => setPage("other")} /></div>
+    <div className="roles"><small>ROLES</small><b>ADMIN</b><small>WBS Version 2.2</small></div>
+  </aside>;
 }
 
-function Topbar({ title, onLogout }) {
-  return <div className="topbar"><span>{title}</span><button className="logout" onClick={onLogout}>Logout</button></div>;
+function Topbar({ title, onLogout }) { return <div className="topbar"><span>{title}</span><button onClick={onLogout}>Logout</button></div>; }
+function Page({ title, children }) { return <section className="content-pad"><div className="card"><h3>{title}</h3>{children}</div></section>; }
+function Input({ label, value, onChange, type = "text" }) { return <label className="field">{label}<input type={type} value={value ?? ""} onChange={e => onChange(e.target.value)} /></label>; }
+function Select({ label, value, onChange, children }) { return <label className="field">{label}<select value={value ?? ""} onChange={e => onChange(e.target.value)}>{children}</select></label>; }
+
+function Dashboard({ data, setPage }) {
+  const totalBill = data.bills.reduce((s, b) => s + computeBill(b).total, 0);
+  const totalPay = data.payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+  return <div className="content-pad"><div className="dash-grid"><button onClick={() => setPage("consumer-list")} className="stat"><b>{data.consumers.length}</b><span>Consumers</span></button><button onClick={() => setPage("billing-list")} className="stat"><b>{data.bills.length}</b><span>Billings</span></button><button onClick={() => setPage("reports")} className="stat"><b>₱{money(totalBill)}</b><span>Total Billings</span></button><button onClick={() => setPage("payment-list")} className="stat"><b>₱{money(totalPay)}</b><span>Payments</span></button></div><div className="card"><h3>Quick Actions</h3><div className="actions"><button onClick={() => setPage("consumer-details")}>Add Consumer</button><button onClick={() => setPage("generate-billing")}>Generate Billing</button><button onClick={() => setPage("payment-posting")}>Post Payment</button><button onClick={() => setPage("reports")}>Open Reports</button></div></div></div>;
 }
 
-function Dashboard({ consumers, billings, payments }) {
-  const totalBilling = billings.reduce((s, b) => s + computeBill(b).totalDue, 0);
-  const totalPaid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
-  return (
-    <div className="content-pad page-grid">
-      <div className="stat"><b>{consumers.length}</b><span>Consumers</span></div>
-      <div className="stat"><b>{billings.length}</b><span>Billings</span></div>
-      <div className="stat"><b>₱{money(totalBilling)}</b><span>Total Billing</span></div>
-      <div className="stat"><b>₱{money(totalPaid)}</b><span>Total Collection</span></div>
-    </div>
-  );
-}
-
-function ConsumerDetails({ consumers, saveConsumers }) {
+function ConsumerDetails({ data, update }) {
   const [form, setForm] = useState({ accountNo: "", name: "", address: "", meterNo: "", status: "Active" });
-  const add = () => {
-    if (!form.accountNo || !form.name) return alert("Account No. and Name are required");
-    saveConsumers([...consumers, { ...form, id: crypto.randomUUID() }]);
-    setForm({ accountNo: "", name: "", address: "", meterNo: "", status: "Active" });
-  };
-  return (
-    <div className="content-pad">
-      <div className="card">
-        <div className="card-head"><h3>Consumer Details</h3></div>
-        <div className="form-grid">
-          {Object.keys(form).map((k) => (
-            <label className="field" key={k}>{k}<input value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></label>
-          ))}
-        </div>
-        <br /><button className="primary" onClick={add}>Save Consumer</button>
-      </div>
-    </div>
-  );
+  const save = () => { if (!form.accountNo || !form.name) return alert("Account No. and Consumer Name are required."); update({ consumers: [...data.consumers, { ...form, id: uid() }] }); setForm({ accountNo: "", name: "", address: "", meterNo: "", status: "Active" }); };
+  return <Page title="Consumer Details"><div className="form-grid"><Input label="Account No." value={form.accountNo} onChange={v => setForm({ ...form, accountNo: v })} /><Input label="Consumer Name" value={form.name} onChange={v => setForm({ ...form, name: v })} /><Input label="Address" value={form.address} onChange={v => setForm({ ...form, address: v })} /><Input label="Meter No." value={form.meterNo} onChange={v => setForm({ ...form, meterNo: v })} /><Input label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })} /></div><button className="primary" onClick={save}>Save Consumer</button></Page>;
 }
 
-function ConsumerList({ consumers, saveConsumers }) {
-  const remove = (id) => saveConsumers(consumers.filter((c) => c.id !== id));
-  return (
-    <div className="content-pad card">
-      <h3>Consumer List</h3>
-      <table className="data-table"><thead><tr><th>Account</th><th>Name</th><th>Address</th><th>Meter</th><th>Status</th><th></th></tr></thead><tbody>
-        {consumers.map((c) => <tr key={c.id}><td>{c.accountNo}</td><td>{c.name}</td><td>{c.address}</td><td>{c.meterNo}</td><td>{c.status}</td><td><button className="mini danger" onClick={() => remove(c.id)}>Delete</button></td></tr>)}
-      </tbody></table>
-    </div>
-  );
+function ConsumerList({ data, update }) { return <Page title="Consumer List"><table className="data-table"><thead><tr><th>Account No.</th><th>Name</th><th>Address</th><th>Meter No.</th><th>Status</th><th>Action</th></tr></thead><tbody>{data.consumers.map(c => <tr key={c.id}><td>{c.accountNo}</td><td>{c.name}</td><td>{c.address}</td><td>{c.meterNo}</td><td>{c.status}</td><td><button className="mini danger" onClick={() => update({ consumers: data.consumers.filter(x => x.id !== c.id) })}>Delete</button></td></tr>)}</tbody></table></Page>; }
+
+function BillingPeriod({ data, update }) {
+  const [form, setForm] = useState({ period: "", dueDate: "", rate: "", assoc: "" });
+  const save = () => { if (!form.period) return alert("Billing period is required."); update({ periods: [...data.periods, { ...form, id: uid() }] }); setForm({ period: "", dueDate: "", rate: "", assoc: "" }); };
+  return <Page title="Billing Period"><div className="form-grid"><Input label="Period Covered" value={form.period} onChange={v => setForm({ ...form, period: v })} /><Input type="date" label="Due Date" value={form.dueDate} onChange={v => setForm({ ...form, dueDate: v })} /><Input type="number" label="Rate per cu.m" value={form.rate} onChange={v => setForm({ ...form, rate: v })} /><Input type="number" label="Association Due" value={form.assoc} onChange={v => setForm({ ...form, assoc: v })} /></div><button className="primary" onClick={save}>Add Billing Period</button><table className="data-table"><thead><tr><th>Period</th><th>Due Date</th><th>Rate</th><th>Association Due</th></tr></thead><tbody>{data.periods.map(p => <tr key={p.id}><td>{p.period}</td><td>{p.dueDate}</td><td>{p.rate}</td><td>{p.assoc}</td></tr>)}</tbody></table></Page>;
 }
 
-function BillingPeriod({ periods, savePeriods }) {
-  const [form, setForm] = useState({ period: "", dueDate: nextMonth(), rate: 18.65, assoc: 50 });
-  const add = () => {
-    if (!form.period) return alert("Period is required");
-    savePeriods([...periods, { ...form, id: crypto.randomUUID() }]);
-    setForm({ period: "", dueDate: nextMonth(), rate: 18.65, assoc: 50 });
-  };
-  return (
-    <div className="content-pad card">
-      <h3>Billing Period</h3>
-      <div className="form-grid">
-        <label className="field">Period Covered<input value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} placeholder="January 2026" /></label>
-        <label className="field">Due Date<input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></label>
-        <label className="field">Rate per cu.m<input type="number" value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} /></label>
-        <label className="field">Association Dues<input type="number" value={form.assoc} onChange={(e) => setForm({ ...form, assoc: e.target.value })} /></label>
-      </div><br />
-      <button className="primary" onClick={add}>Add Period</button>
-      <table className="data-table"><thead><tr><th>Period</th><th>Due Date</th><th>Rate</th><th>Assoc</th></tr></thead><tbody>{periods.map(p => <tr key={p.id}><td>{p.period}</td><td>{p.dueDate}</td><td>{p.rate}</td><td>{p.assoc}</td></tr>)}</tbody></table>
-    </div>
-  );
-}
-
-function GenerateBilling({ consumers, periods, billings, saveBillings }) {
+function GenerateBilling({ data, update }) {
   const [form, setForm] = useState({ consumerId: "", periodId: "", previousReading: "", presentReading: "", previousBalance: 0 });
-  const selectedPeriod = periods.find((p) => p.id === form.periodId);
-  const preview = computeBill({ ...form, rate: selectedPeriod?.rate, assoc: selectedPeriod?.assoc });
-  const generate = () => {
-    const consumer = consumers.find((c) => c.id === form.consumerId);
-    if (!consumer || !selectedPeriod) return alert("Select consumer and billing period");
-    const row = {
-      id: crypto.randomUUID(), consumerId: consumer.id, accountNo: consumer.accountNo, name: consumer.name,
-      address: consumer.address, meterNo: consumer.meterNo, period: selectedPeriod.period, dueDate: selectedPeriod.dueDate,
-      rate: selectedPeriod.rate, assoc: selectedPeriod.assoc, previousReading: form.previousReading,
-      presentReading: form.presentReading, previousBalance: form.previousBalance, status: "Unpaid", createdAt: today(),
-    };
-    saveBillings([...billings, row]);
-    setForm({ consumerId: "", periodId: "", previousReading: "", presentReading: "", previousBalance: 0 });
-  };
-  return (
-    <div className="content-pad card">
-      <h3>Generate Billing</h3>
-      <div className="form-grid">
-        <label className="field">Consumer<select value={form.consumerId} onChange={(e) => setForm({ ...form, consumerId: e.target.value })}><option value="">Select</option>{consumers.map(c => <option key={c.id} value={c.id}>{c.accountNo} - {c.name}</option>)}</select></label>
-        <label className="field">Period<select value={form.periodId} onChange={(e) => setForm({ ...form, periodId: e.target.value })}><option value="">Select</option>{periods.map(p => <option key={p.id} value={p.id}>{p.period}</option>)}</select></label>
-        <label className="field">Previous Reading<input type="number" value={form.previousReading} onChange={(e) => setForm({ ...form, previousReading: e.target.value })} /></label>
-        <label className="field">Present Reading<input type="number" value={form.presentReading} onChange={(e) => setForm({ ...form, presentReading: e.target.value })} /></label>
-        <label className="field">Previous Balance<input type="number" value={form.previousBalance} onChange={(e) => setForm({ ...form, previousBalance: e.target.value })} /></label>
-      </div>
-      <p className="muted">Consumption: {preview.consumption} cu.m | Water Bill: ₱{money(preview.waterBill)} | Total Due: ₱{money(preview.totalDue)}</p>
-      <button className="primary" onClick={generate}>Generate Billing</button>
-    </div>
-  );
+  const consumer = data.consumers.find(c => c.id === form.consumerId); const period = data.periods.find(p => p.id === form.periodId);
+  const preview = computeBill({ ...form, rate: period?.rate, assoc: period?.assoc });
+  const generate = () => { if (!consumer || !period) return alert("Select consumer and billing period."); const bill = { id: uid(), consumerId: consumer.id, accountNo: consumer.accountNo, name: consumer.name, address: consumer.address, meterNo: consumer.meterNo, period: period.period, dueDate: period.dueDate, rate: period.rate, assoc: period.assoc, previousReading: form.previousReading, presentReading: form.presentReading, previousBalance: form.previousBalance, status: "Unpaid", createdAt: today() }; update({ bills: [...data.bills, bill] }); setForm({ consumerId: "", periodId: "", previousReading: "", presentReading: "", previousBalance: 0 }); };
+  return <Page title="Generate Billing"><div className="form-grid"><Select label="Consumer" value={form.consumerId} onChange={v => setForm({ ...form, consumerId: v })}><option value="">Select consumer</option>{data.consumers.map(c => <option key={c.id} value={c.id}>{c.accountNo} - {c.name}</option>)}</Select><Select label="Billing Period" value={form.periodId} onChange={v => setForm({ ...form, periodId: v })}><option value="">Select period</option>{data.periods.map(p => <option key={p.id} value={p.id}>{p.period}</option>)}</Select><Input type="number" label="Previous Reading" value={form.previousReading} onChange={v => setForm({ ...form, previousReading: v })} /><Input type="number" label="Present Reading" value={form.presentReading} onChange={v => setForm({ ...form, presentReading: v })} /><Input type="number" label="Previous Balance" value={form.previousBalance} onChange={v => setForm({ ...form, previousBalance: v })} /></div><div className="summary-line">Consumption: <b>{preview.consumption}</b> cu.m | Water Bill: <b>₱{money(preview.water)}</b> | Total Due: <b>₱{money(preview.total)}</b></div><button className="primary" onClick={generate}>Generate Billing</button></Page>;
 }
 
-function BillNotice({ bill, settings, onClose }) {
-  if (!bill) return null;
-  const c = computeBill(bill);
-  const download = () => html2pdf().set({ margin: 8, filename: `${bill.accountNo}-${bill.period}.pdf` }).from(document.querySelector(".paper")).save();
-  return (
-    <div className="modal-backdrop">
-      <div className="notice-modal">
-        <div className="notice-toolbar"><b>Billing Notice Preview</b><div><button onClick={download}>Download PDF</button><button onClick={onClose}>Close</button></div></div>
-        <div className="paper">
-          <div className="red-note">NOTE: PLEASE PAY IMMEDIATELY TO AVOID DISCONNECTION</div>
-          <div className="hoa-title"><b>{settings.businessName}</b><small>{settings.subtitle}<br />{settings.address}</small></div>
-          <table className="bill-table"><tbody>
-            <tr><td>As of</td><td>{bill.createdAt}</td><td className="cyan">Account No.</td><td>{bill.accountNo}</td><td>Due Date</td><td className="yellow">{bill.dueDate}</td></tr>
-            <tr><td colSpan="2">Consumer</td><td colSpan="2">{bill.name}</td><td>Meter Number</td><td>{bill.meterNo}</td></tr>
-            <tr><td colSpan="2">Address</td><td colSpan="4">{bill.address}</td></tr>
-            <tr><td rowSpan="5" colSpan="2" className="meter-photo">Meter / Photo Area<br /><div className="fake-meter">m³</div></td><td>Period Covered</td><td>{bill.period}</td><td>Previous Reading</td><td>{bill.previousReading}</td></tr>
-            <tr><td>Present Reading</td><td>{bill.presentReading}</td><td>Consumption per cu.m</td><td className="rednum">{c.consumption}</td></tr>
-            <tr><td>Water Bill for the Month</td><td colSpan="3" className="right">₱{money(c.waterBill)}</td></tr>
-            <tr><td>Previous Month's Account</td><td colSpan="3" className="right">₱{money(bill.previousBalance)}</td></tr>
-            <tr><td className="cyan">Total Water Bill</td><td colSpan="3" className="right cyan">₱{money(c.waterBill + Number(bill.previousBalance || 0))}</td></tr>
-            <tr><td colSpan="2">Association Dues for the Month</td><td colSpan="4" className="right">₱{money(bill.assoc)}</td></tr>
-            <tr><td colSpan="2" className="pink redtext">Total Monthly Due</td><td colSpan="4" className="right pink redtext big">₱{money(c.totalDue)}</td></tr>
-            <tr><td colSpan="2" className="green-bg"><b>Grand Total Due</b></td><td colSpan="4" className="right green-bg big"><b>₱{money(c.totalDue)}</b></td></tr>
-          </tbody></table>
-          <div className="authorized">AS AUTHORIZED, ALL PAYMENTS SHALL BE RECEIVED BY {settings.authorizedBy}</div>
-          <table className="schedule"><tbody><tr><td>{settings.officeHours1}</td></tr><tr><td>{settings.officeHours2}</td></tr><tr><td>{settings.note}</td></tr></tbody></table>
-        </div>
-      </div>
-    </div>
-  );
+function Notice({ bill, settings, close }) {
+  if (!bill) return null; const c = computeBill(bill); const pdf = () => html2pdf().set({ margin: 6, filename: `${bill.accountNo}-${bill.period}.pdf` }).from(document.querySelector(".paper")).save();
+  return <div className="modal-backdrop"><div className="notice-modal"><div className="notice-toolbar"><b>Generated Billing Notice</b><div><button onClick={pdf}>Download PDF</button><button onClick={close}>Close</button></div></div><div className="paper"><div className="red-note">NOTE: PLEASE PAY IMMEDIATELY TO AVOID DISCONNECTION</div><div className="hoa-title"><b>{settings.businessName}</b><small>{settings.subtitle}<br />{settings.address}</small></div><table className="bill-table"><tbody><tr><td>As of</td><td>{bill.createdAt}</td><td className="cyan">Account No.</td><td>{bill.accountNo}</td><td>Due Date</td><td className="yellow">{bill.dueDate}</td></tr><tr><td colSpan="2">Consumer</td><td colSpan="4">{bill.name}</td></tr><tr><td colSpan="2">Address</td><td colSpan="4">{bill.address}</td></tr><tr><td rowSpan="5" colSpan="2" className="meter-photo">Meter Photo Area<div className="fake-meter">m³</div></td><td>Period Covered</td><td>{bill.period}</td><td>Meter Number</td><td>{bill.meterNo}</td></tr><tr><td>Previous Reading</td><td>{bill.previousReading}</td><td>Present Reading</td><td>{bill.presentReading}</td></tr><tr><td>Consumption per cu.m</td><td className="rednum">{c.consumption}</td><td>Water Bill</td><td className="right">₱{money(c.water)}</td></tr><tr><td>Previous Balance</td><td colSpan="3" className="right">₱{money(bill.previousBalance)}</td></tr><tr><td className="cyan">Total Water Bill</td><td colSpan="3" className="right cyan">₱{money(c.water + Number(bill.previousBalance || 0))}</td></tr><tr><td colSpan="2">Association Due</td><td colSpan="4" className="right">₱{money(bill.assoc)}</td></tr><tr><td colSpan="2" className="pink redtext">Total Monthly Due</td><td colSpan="4" className="right pink redtext big">₱{money(c.total)}</td></tr><tr><td colSpan="2" className="green-bg"><b>Grand Total Due</b></td><td colSpan="4" className="right green-bg big"><b>₱{money(c.total)}</b></td></tr></tbody></table><div className="authorized">AS AUTHORIZED, ALL PAYMENTS SHALL BE RECEIVED BY {settings.collector}</div><table className="schedule"><tbody><tr><td>{settings.weekday}</td></tr><tr><td>{settings.saturday}</td></tr><tr><td>{settings.note}</td></tr></tbody></table></div></div></div>;
 }
 
-function BillingList({ billings, saveBillings, settings }) {
-  const [preview, setPreview] = useState(null);
-  const remove = (id) => saveBillings(billings.filter((b) => b.id !== id));
-  return (
-    <div className="content-pad card">
-      <h3>Billing List</h3>
-      <table className="data-table"><thead><tr><th>Period</th><th>Account</th><th>Name</th><th>Total Due</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        {billings.map((b) => <tr key={b.id}><td>{b.period}</td><td>{b.accountNo}</td><td>{b.name}</td><td>₱{money(computeBill(b).totalDue)}</td><td>{b.status}</td><td className="row-actions"><button className="mini" onClick={() => setPreview(b)}>View / PDF</button><button className="mini danger" onClick={() => remove(b.id)}>Delete</button></td></tr>)}
-      </tbody></table>
-      <BillNotice bill={preview} settings={settings} onClose={() => setPreview(null)} />
-    </div>
-  );
+function BillingList({ data, update }) { const [bill, setBill] = useState(null); return <Page title="Billing List"><table className="data-table"><thead><tr><th>Period</th><th>Account</th><th>Name</th><th>Total Due</th><th>Status</th><th>Action</th></tr></thead><tbody>{data.bills.map(b => <tr key={b.id}><td>{b.period}</td><td>{b.accountNo}</td><td>{b.name}</td><td>₱{money(computeBill(b).total)}</td><td>{b.status}</td><td className="row-actions"><button className="mini" onClick={() => setBill(b)}>Generate Report</button><button className="mini danger" onClick={() => update({ bills: data.bills.filter(x => x.id !== b.id) })}>Delete</button></td></tr>)}</tbody></table><Notice bill={bill} settings={data.settings} close={() => setBill(null)} /></Page>; }
+
+function PaymentPosting({ data, update }) { const [billingId, setBillingId] = useState(""); const [amount, setAmount] = useState(""); const post = () => { const bill = data.bills.find(b => b.id === billingId); if (!bill || !amount) return alert("Select billing and enter payment amount."); const payment = { id: uid(), billingId, accountNo: bill.accountNo, name: bill.name, period: bill.period, amount, paymentDate: today() }; update({ payments: [...data.payments, payment], bills: data.bills.map(b => b.id === billingId ? { ...b, status: Number(amount) >= computeBill(b).total ? "Paid" : "Partial" } : b) }); setBillingId(""); setAmount(""); }; return <Page title="Payment Posting"><div className="inline-form"><Select label="Billing" value={billingId} onChange={setBillingId}><option value="">Select billing</option>{data.bills.map(b => <option key={b.id} value={b.id}>{b.accountNo} - {b.name} - ₱{money(computeBill(b).total)}</option>)}</Select><Input type="number" label="Payment Amount" value={amount} onChange={setAmount} /><button className="primary" onClick={post}>Post Payment</button></div></Page>; }
+function PaymentList({ data }) { return <Page title="Payment List"><table className="data-table"><thead><tr><th>Date</th><th>Account</th><th>Name</th><th>Period</th><th>Amount</th></tr></thead><tbody>{data.payments.map(p => <tr key={p.id}><td>{p.paymentDate}</td><td>{p.accountNo}</td><td>{p.name}</td><td>{p.period}</td><td>₱{money(p.amount)}</td></tr>)}</tbody></table></Page>; }
+
+function Reports({ data }) {
+  const [open, setOpen] = useState("monthly"); const periods = [...new Set(data.bills.map(b => b.period))]; const [period, setPeriod] = useState(periods[0] || ""); const bills = data.bills.filter(b => !period || b.period === period); const unpaid = bills.filter(b => b.status !== "Paid"); const collections = data.payments.reduce((a, p) => ({ ...a, [p.paymentDate]: (a[p.paymentDate] || 0) + Number(p.amount || 0) }), {}); const total = bills.reduce((s, b) => s + computeBill(b).total, 0);
+  const Acc = ({ id, title, children }) => <div className="acc"><button className="acc-head" onClick={() => setOpen(open === id ? "" : id)}>{title}</button>{open === id && <div className="acc-body">{children}</div>}</div>;
+  return <div className="report-shell"><Acc id="daily" title="Daily Payment Collection Report"><table className="data-table"><tbody>{Object.entries(collections).map(([d, amt]) => <tr key={d}><td>{d}</td><td>₱{money(amt)}</td></tr>)}</tbody></table></Acc><Acc id="outstanding" title="Consumer With Outstanding Billing Report"><table className="data-table"><tbody>{unpaid.map(b => <tr key={b.id}><td>{b.accountNo}</td><td>{b.name}</td><td>₱{money(computeBill(b).total)}</td></tr>)}</tbody></table></Acc><Acc id="detailed" title="Detailed Summary Report"><table className="data-table"><tbody>{bills.map(b => <tr key={b.id}><td>{b.accountNo}</td><td>{b.name}</td><td>{computeBill(b).consumption} cu.m</td><td>₱{money(computeBill(b).total)}</td></tr>)}</tbody></table></Acc><Acc id="monthly" title="Monthly Billing Summary Report"><div className="monthly-row"><label><span>Period Covered</span><select value={period} onChange={e => setPeriod(e.target.value)}>{periods.map(p => <option key={p}>{p}</option>)}</select></label><label className="showpay"><input type="checkbox" /> Show Payment</label></div><div className="billing-report-title">Billing Summary Report</div><div className="summary-line">Number of Bills: <b>{bills.length}</b> | Total Billing: <b>₱{money(total)}</b></div></Acc></div>;
 }
 
-function PaymentPosting({ billings, saveBillings, payments, savePayments }) {
-  const [billingId, setBillingId] = useState("");
-  const [amount, setAmount] = useState("");
-  const post = () => {
-    const bill = billings.find((b) => b.id === billingId);
-    if (!bill || !amount) return alert("Select billing and enter amount");
-    const payment = { id: crypto.randomUUID(), billingId, accountNo: bill.accountNo, name: bill.name, period: bill.period, amount, paymentDate: today() };
-    savePayments([...payments, payment]);
-    saveBillings(billings.map((b) => b.id === billingId ? { ...b, status: Number(amount) >= computeBill(b).totalDue ? "Paid" : "Partial" } : b));
-    setBillingId(""); setAmount("");
-  };
-  return <div className="content-pad card"><h3>Payment Posting</h3><div className="inline-form"><label className="field">Billing<select value={billingId} onChange={(e) => setBillingId(e.target.value)}><option value="">Select</option>{billings.map(b => <option key={b.id} value={b.id}>{b.accountNo} - {b.name} - ₱{money(computeBill(b).totalDue)}</option>)}</select></label><label className="field">Amount<input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></label><button className="primary" onClick={post}>Post Payment</button></div></div>;
-}
+function Users({ data, update }) { const [name, setName] = useState(""); return <Page title="Users"><div className="inline-form"><Input label="User Name" value={name} onChange={setName} /><button className="primary" onClick={() => name && (update({ users: [...data.users, { id: uid(), name, role: "USER" }] }), setName(""))}>Add User</button></div><table className="data-table"><tbody>{data.users.map(u => <tr key={u.id}><td>{u.name}</td><td>{u.role}</td></tr>)}</tbody></table></Page>; }
+function BusinessInfo({ data, update }) { const change = (k, v) => update({ settings: { ...data.settings, [k]: v } }); return <Page title="Business Info"><div className="form-grid">{Object.keys(data.settings).map(k => <Input key={k} label={k} value={data.settings[k]} onChange={v => change(k, v)} />)}</div></Page>; }
+function ConversionTable({ data, update }) { const [label, setLabel] = useState(""); const [value, setValue] = useState(""); return <Page title="Conversion Table"><div className="inline-form"><Input label="Label" value={label} onChange={setLabel} /><Input label="Value" value={value} onChange={setValue} /><button className="primary" onClick={() => label && (update({ conversions: [...data.conversions, { id: uid(), label, value }] }), setLabel(""), setValue(""))}>Add</button></div><table className="data-table"><tbody>{data.conversions.map(c => <tr key={c.id}><td>{c.label}</td><td>{c.value}</td></tr>)}</tbody></table></Page>; }
+function Other({ data, update }) { return <Page title="Other Settings"><div className="actions"><button onClick={() => navigator.clipboard?.writeText(JSON.stringify(data, null, 2))}>Copy Backup JSON</button><button className="danger" onClick={() => confirm("Clear all workspace data?") && update(initialData())}>Reset Workspace</button></div></Page>; }
 
-function PaymentList({ payments }) {
-  return <div className="content-pad card"><h3>Payment List</h3><table className="data-table"><thead><tr><th>Date</th><th>Account</th><th>Name</th><th>Period</th><th>Amount</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td>{p.paymentDate}</td><td>{p.accountNo}</td><td>{p.name}</td><td>{p.period}</td><td>₱{money(p.amount)}</td></tr>)}</tbody></table></div>;
-}
-
-function Reports({ billings, payments }) {
-  const [open, setOpen] = useState("monthly");
-  const periods = [...new Set(billings.map((b) => b.period))];
-  const [period, setPeriod] = useState(periods[0] || "");
-  const periodBills = billings.filter((b) => !period || b.period === period);
-  const unpaid = periodBills.filter((b) => b.status !== "Paid");
-  const total = periodBills.reduce((s, b) => s + computeBill(b).totalDue, 0);
-  const collections = payments.reduce((m, p) => { m[p.paymentDate] = (m[p.paymentDate] || 0) + Number(p.amount || 0); return m; }, {});
-  const Section = ({ id, title, children }) => <div className="acc"><button className="acc-head" onClick={() => setOpen(open === id ? null : id)}>{title}</button>{open === id && <div className="acc-body">{children}</div>}</div>;
-  return (
-    <div className="report-shell">
-      <Section id="daily" title="Daily Payment Collection Report"><table className="data-table"><tbody>{Object.entries(collections).map(([d, a]) => <tr key={d}><td>{d}</td><td>₱{money(a)}</td></tr>)}</tbody></table></Section>
-      <Section id="outstanding" title="Consumer With Outstanding Billing Report"><table className="data-table"><tbody>{unpaid.map(b => <tr key={b.id}><td>{b.name}</td><td>{b.period}</td><td>₱{money(computeBill(b).totalDue)}</td></tr>)}</tbody></table></Section>
-      <Section id="detailed" title="Detailed Summary Report"><table className="data-table"><tbody>{periodBills.map(b => <tr key={b.id}><td>{b.accountNo}</td><td>{b.name}</td><td>{computeBill(b).consumption} cu.m</td><td>₱{money(computeBill(b).totalDue)}</td></tr>)}</tbody></table></Section>
-      <Section id="monthly" title="Monthly Billing Summary Report"><div className="monthly-box"><label className="period-label">Period Covered</label><div className="monthly-row"><select value={period} onChange={(e) => setPeriod(e.target.value)}>{periods.map(p => <option key={p}>{p}</option>)}</select><label className="showpay"><input type="checkbox" /> Show Payment</label></div><h3>Billing Summary Report</h3><p>Total Billings: ₱{money(total)}</p><p>Number of Bills: {periodBills.length}</p></div></Section>
-    </div>
-  );
-}
-
-function Settings({ settings, saveSettings }) {
-  return <div className="content-pad card"><h3>Business Info / Settings</h3><div className="form-grid">{Object.keys(settings).map(k => <label className="field" key={k}>{k}<input value={settings[k]} onChange={(e) => saveSettings({ ...settings, [k]: e.target.value })} /></label>)}</div></div>;
-}
-
-const titleMap = {
-  dashboard: "DASHBOARD",
-  "consumer-details": "CONSUMER MANAGEMENT",
-  "consumer-list": "CONSUMER LIST",
-  "billing-period": "BILLING PERIOD",
-  "generate-billing": "GENERATE BILLING",
-  "billing-list": "BILLING LIST",
-  "payment-posting": "PAYMENT POSTING",
-  "payment-list": "PAYMENT LIST",
-  reports: "REPORT MANAGEMENT",
-  settings: "SETTINGS",
-};
+const titles = { dashboard: "DASHBOARD", "consumer-details": "CONSUMER MANAGEMENT", "consumer-list": "CONSUMER LIST", "billing-period": "BILLING PERIOD", "generate-billing": "GENERATE BILLING", "billing-list": "BILLING LIST", "payment-posting": "PAYMENT POSTING", "payment-list": "PAYMENT LIST", reports: "REPORT MANAGEMENT", users: "USER MANAGEMENT", "business-info": "BUSINESS INFO", "conversion-table": "CONVERSION TABLE", other: "OTHER SETTINGS" };
 
 function App() {
-  const [user, setUser] = useState(localStorage.getItem("wbs:lastUser") || null);
-  const [page, setPage] = useState("reports");
-  const data = useTenantData(user);
-  const login = (u) => { localStorage.setItem("wbs:lastUser", u); setUser(u); };
-  const logout = () => { localStorage.removeItem("wbs:lastUser"); setUser(null); };
+  const [user, setUser] = useState(localStorage.getItem("wbs-user") || ""); const key = `wbs-data-${user || "guest"}`; const [page, setPage] = useState("reports"); const [data, setData] = useState(initialData());
+  useEffect(() => { if (user) setData(store.get(key, initialData())); }, [user]);
+  const update = (patch) => { const next = { ...data, ...patch }; setData(next); store.set(key, next); };
+  const login = (u) => { localStorage.setItem("wbs-user", u); setUser(u); };
+  const logout = () => { localStorage.removeItem("wbs-user"); setUser(""); };
   if (!user) return <Login onLogin={login} />;
-  return (
-    <div className="app">
-      <Sidebar page={page} setPage={setPage} user={user} />
-      <main className="main">
-        <Topbar title={titleMap[page]} onLogout={logout} />
-        {page === "dashboard" && <Dashboard {...data} />}
-        {page === "consumer-details" && <ConsumerDetails {...data} />}
-        {page === "consumer-list" && <ConsumerList {...data} />}
-        {page === "billing-period" && <BillingPeriod {...data} />}
-        {page === "generate-billing" && <GenerateBilling {...data} />}
-        {page === "billing-list" && <BillingList {...data} />}
-        {page === "payment-posting" && <PaymentPosting {...data} />}
-        {page === "payment-list" && <PaymentList {...data} />}
-        {page === "reports" && <Reports {...data} />}
-        {page === "settings" && <Settings {...data} />}
-      </main>
-    </div>
-  );
+  return <div className="app"><Sidebar page={page} setPage={setPage} user={user} /><main className="main"><Topbar title={titles[page]} onLogout={logout} />{page === "dashboard" && <Dashboard data={data} setPage={setPage} />}{page === "consumer-details" && <ConsumerDetails data={data} update={update} />}{page === "consumer-list" && <ConsumerList data={data} update={update} />}{page === "billing-period" && <BillingPeriod data={data} update={update} />}{page === "generate-billing" && <GenerateBilling data={data} update={update} />}{page === "billing-list" && <BillingList data={data} update={update} />}{page === "payment-posting" && <PaymentPosting data={data} update={update} />}{page === "payment-list" && <PaymentList data={data} />}{page === "reports" && <Reports data={data} />}{page === "users" && <Users data={data} update={update} />}{page === "business-info" && <BusinessInfo data={data} update={update} />}{page === "conversion-table" && <ConversionTable data={data} update={update} />}{page === "other" && <Other data={data} update={update} />}</main></div>;
 }
 
 createRoot(document.getElementById("root")).render(<App />);
