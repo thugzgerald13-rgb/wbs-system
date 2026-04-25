@@ -1,81 +1,114 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
-import { supabase, isSupabaseConfigured } from "./supabase";
-
-const money = (n) => Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 });
 
 const LS = {
   get: (k) => JSON.parse(localStorage.getItem(k) || "[]"),
   set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
 };
 
-async function fetchTable(table) {
-  if (isSupabaseConfigured) {
-    const { data } = await supabase.from(table).select("*");
-    return data || [];
-  }
-  return LS.get(table);
+function Login({ onLogin }) {
+  const [user, setUser] = useState("");
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <h2>WBS System Login</h2>
+        <input placeholder="Enter username" value={user} onChange={e => setUser(e.target.value)} />
+        <button onClick={() => user && onLogin(user)}>Login</button>
+      </div>
+    </div>
+  );
 }
 
-async function insertTable(table, row) {
-  if (isSupabaseConfigured) {
-    return await supabase.from(table).insert(row);
-  }
-  const data = LS.get(table);
-  data.push({ ...row, id: Date.now() });
-  LS.set(table, data);
+function Sidebar({ setPage }) {
+  return (
+    <div className="sidebar">
+      <div className="userbar">
+        <span>WBS SYSTEM</span>
+      </div>
+      <button className="side-item" onClick={() => setPage("dashboard")}>Dashboard</button>
+      <button className="side-item" onClick={() => setPage("billing")}>Billing</button>
+      <button className="side-item" onClick={() => setPage("reports")}>Reports</button>
+    </div>
+  );
 }
 
-function App() {
-  const [bills, setBills] = useState([]);
-  const [form, setForm] = useState({ name: "", amount: "" });
-
-  const load = async () => {
-    const data = await fetchTable("bills");
-    setBills(data);
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const addBill = async () => {
-    if (!form.name || !form.amount) return alert("Fill all fields");
-    await insertTable("bills", form);
-    setForm({ name: "", amount: "" });
-    load();
-  };
-
+function Dashboard({ bills }) {
   const total = bills.reduce((s, b) => s + Number(b.amount || 0), 0);
 
   return (
     <div className="content-pad">
-      <h2>WBS Billing System</h2>
+      <h2>Dashboard</h2>
+      <div className="stat">
+        <b>₱{total.toLocaleString()}</b>
+        <span>Total Billing</span>
+      </div>
+    </div>
+  );
+}
 
-      {!isSupabaseConfigured && (
-        <div className="error">LOCAL MODE (No Supabase)</div>
-      )}
+function Billing({ bills, setBills }) {
+  const [form, setForm] = useState({ name: "", amount: "" });
+
+  const add = () => {
+    const newData = [...bills, { ...form, id: Date.now() }];
+    setBills(newData);
+    LS.set("bills", newData);
+    setForm({ name: "", amount: "" });
+  };
+
+  return (
+    <div className="content-pad">
+      <h2>Billing</h2>
 
       <div className="card">
-        <h3>Add Bill</h3>
-        <input value={form.name} placeholder="Name" onChange={e => setForm({ ...form, name: e.target.value })} />
-        <input value={form.amount} placeholder="Amount" type="number" onChange={e => setForm({ ...form, amount: e.target.value })} />
-        <button onClick={addBill}>Add</button>
+        <input placeholder="Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+        <input placeholder="Amount" type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
+        <button onClick={add}>Add Bill</button>
       </div>
 
-      <div className="card">
-        <h3>All Bills</h3>
-        <table className="data-table">
-          <thead><tr><th>Name</th><th>Amount</th></tr></thead>
-          <tbody>
-            {bills.map(b => (
-              <tr key={b.id}>
-                <td>{b.name}</td>
-                <td>₱{money(b.amount)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <h3>Total: ₱{money(total)}</h3>
+      <table className="data-table">
+        <thead><tr><th>Name</th><th>Amount</th></tr></thead>
+        <tbody>
+          {bills.map(b => (
+            <tr key={b.id}><td>{b.name}</td><td>₱{Number(b.amount).toLocaleString()}</td></tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Reports({ bills }) {
+  const total = bills.reduce((s, b) => s + Number(b.amount || 0), 0);
+
+  return (
+    <div className="content-pad">
+      <h2>Reports</h2>
+      <p>Total Bills: ₱{total.toLocaleString()}</p>
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [page, setPage] = useState("dashboard");
+  const [bills, setBills] = useState([]);
+
+  useEffect(() => {
+    setBills(LS.get("bills"));
+  }, []);
+
+  if (!user) return <Login onLogin={setUser} />;
+
+  return (
+    <div className="app">
+      <Sidebar setPage={setPage} />
+      <div className="main">
+        {page === "dashboard" && <Dashboard bills={bills} />}
+        {page === "billing" && <Billing bills={bills} setBills={setBills} />}
+        {page === "reports" && <Reports bills={bills} />}
       </div>
     </div>
   );
