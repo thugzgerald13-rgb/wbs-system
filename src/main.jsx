@@ -8,6 +8,7 @@ import {
 import "./styles.css";
 import { supabase } from "./supabase";
 
+<<<<<<< HEAD
 const money = new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function saveCache(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
@@ -39,6 +40,17 @@ function toBill(row) {
     receiver: row.receiver || "",
     status: row.status || "Unpaid"
   };
+=======
+const API = "https://your-app-name.onrender.com/api";
+const money = new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function api(token, path, options={}) {
+  return import { supabase } from "./supabase";
+
+const { data } = await supabase
+  .from("consumers")
+  .select("*");
+>>>>>>> 4e5e18c (temp save before sync)
 }
 function toPayment(row) { return { id: row.id, accountNo: row.account_no || "", date: row.payment_date || "", amount: Number(row.amount || 0), reference: row.reference || "" }; }
 
