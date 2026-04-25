@@ -183,11 +183,7 @@ function Reports({ setPage, setPreviewBill }) {
     setPreviewBill(bill);
     setTimeout(() => exportPDF(), 500);
   }}
-><button onClick={() => exportToExcel(bills)}>
-  Export Excel
-</button><button onClick={() => exportPDF()}>
-  Download PDF
-</button><Printer size={16} /> Generate Billing Notice</button></div></div></div></div>
+><Printer size={16} /> Generate Billing Notice</button></div></div></div></div>
     <div className="acc"><button className="acc-head">Billing Summary Report</button></div>
   </div>;
 }
