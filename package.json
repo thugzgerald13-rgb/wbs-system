@@ -1,23 +1,20 @@
 {
+  "name": "wbs-system",
+  "private": true,
+  "version": "1.0.0",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "client": "vite --host 0.0.0.0",
-    "server": "node server/index.js",
+    "dev": "vite --host",
     "build": "vite build",
-    "start": "node server/index.js"
+    "preview": "vite preview --host"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "@supabase/supabase-js": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest",
-    "express": "latest",
-    "cors": "latest",
-    "better-sqlite3": "latest",
-    "bcryptjs": "latest",
-    "jsonwebtoken": "latest",
-    "concurrently": "latest"
+    "lucide-react": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "vite": "latest",
+    "@vitejs/plugin-react": "latest"
+  }
 }
